@@ -51,7 +51,11 @@ class SLR54MetaGenerator(SpeechTextMetaGenerator):
 
         def populate_file_path(id):
             return os.path.join(src_path,"data", "wav", id[:2], f"{id}.wav")
+        def populate_npz_path(id):
+            return os.path.join(src_path,"data", "npz", id[:2], f"{id}.npz")
+
         df['path'] = df["fileid"].map(populate_file_path)
+        df['npz_path'] = df["fileid"].map(populate_file_path)
 
         # Define the labels and their corresponding ratios
         labels = ['train', 'test', 'valid']
@@ -60,15 +64,20 @@ class SLR54MetaGenerator(SpeechTextMetaGenerator):
 
         meta_dict = dict()
         for subset in labels:
-            meta_dict[subset] = dict(idx2wav=dict(), idx2spk=dict(), idx2gen=dict())
-            meta_dict[subset][f'idx2text'] = dict()
+            meta_dict[subset] = dict(
+                                    idx2wav  = dict(),
+                                    idx2spk  = dict(),
+                                    idx2gen  = dict(),
+                                    idx2text = dict(),
+                                    idx2feat = dict(),
+                                )
             meta_dict[subset][f'idx2no-punc_text'] = dict()
 
         for _, row in df.iterrows():
             split = row['split']
             fileid = row['fileid']
-            # meta_dict['valid']['idx2wav'][file_name] = os.path.abspath(file_path)
             meta_dict[split]['idx2wav'][fileid] = row['path']
+            meta_dict[split]['idx2feat'][fileid] = row['npz_path']
             meta_dict[split]['idx2spk'][fileid] = row['speaker']
             meta_dict[split]['idx2text'][fileid] = row['text']
             meta_dict[split]['idx2no-punc_text'][fileid] = row['text']
