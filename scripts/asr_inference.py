@@ -1,4 +1,5 @@
 import os
+import sys
 import random
 import torch
 import torchaudio
@@ -12,13 +13,20 @@ from speechain.runner import Runner
 
 from speechain.infer_func.beam_search_single import beam_search_single
 
+# Add path for CCNN
+sys.path.append("/home/is/r-ghimire/decoding")
+from CCNN.model import CCNN
+from CCNN.vocab import Vocab as CCNNVocab
 
 tqdm.pandas()
 
 SPEECHAIN_ROOT = "/home/is/r-ghimire/speechain"
 EXP_DIR    = f"{SPEECHAIN_ROOT}/recipes/asr/slr54nepaliasr/exp/ne_char_conformer-tuned_lr2e-3"
 CHECKPOINT = f"{EXP_DIR}/models/10_valid_accuracy_average.pth"
-DEVICE = "cuda"
+DEVICE = "cuda:3"
+
+CCNN_VOCAB_PATH = "/home/is/r-ghimire/decoding/CCNN/ne.vocab"
+CCNN_CHECKPOINT = "/home/is/r-ghimire/decoding/checkpoint/ccnn_lstm_slr54_ep20.pt"
 
 
 def load_asr_model():
@@ -42,6 +50,43 @@ def load_asr_model():
     return model
 
 
+def load_ccnn_model(device):
+    with open(CCNN_VOCAB_PATH, "r", encoding="utf-8") as f:
+        tokens = [v.rstrip('\n') for v in f]
+    vocab = CCNNVocab(tokens)
+
+    ckpt = torch.load(CCNN_CHECKPOINT, map_location=device, weights_only=False)
+    args = ckpt['config']
+
+    model = CCNN(
+        vocab_size=len(vocab.tokens),
+        pad_id=vocab.pad_id,
+        d_model=args.d_model,
+        n_layers=args.layers,
+        dropout=args.dropout
+    ).to(device)
+
+    model.load_state_dict(ckpt['model'])
+    model.eval()
+    return model, vocab
+
+
+def get_asr2ccnn_map(asr_tokenizer, ccnn_vocab, device):
+    mapping = torch.zeros(asr_tokenizer.vocab_size, dtype=torch.long)
+
+    for i in range(asr_tokenizer.vocab_size):
+        if i == asr_tokenizer.ignore_idx:
+            mapping[i] = ccnn_vocab.pad_id
+        elif i == asr_tokenizer.sos_eos_idx:
+            mapping[i] = ccnn_vocab.eos_id
+        else:
+            # Assuming idx2token exists or similar method
+            token = asr_tokenizer.idx2token.get(i, "")
+            mapping[i] = ccnn_vocab.token_to_id.get(token, ccnn_vocab.pad_id)
+
+    return mapping.to(device)
+
+
 def transcribe(audio_file_name, model, decoding_tech = 'builtin', infer_conf={}):
     """
         decoding_tech: builtin (as is of speechain)
@@ -56,19 +101,19 @@ def transcribe(audio_file_name, model, decoding_tech = 'builtin', infer_conf={})
     feat_len = torch.tensor([wav.shape[0]], device=DEVICE)
 
     if decoding_tech == 'builtin':
-        infer_conf = {
-            "beam_size": 16,
-            "ctc_weight": 0.2,
-            "decode_only": True,
-        }
+        # infer_conf = {
+        #     "beam_size": 20,
+        #     "ctc_weight": 0.2,
+        #     "decode_only": True,
+        # }
         with torch.inference_mode():
             out = model.inference(
                 infer_conf=infer_conf,
                 feat=feat,
                 feat_len=feat_len,
-                decode_only=True,
+                # decode_only=True,
             )
-        return out["text"]["content"][0]
+        return out
 
     elif decoding_tech == 'ccnn_guided':
         enc_feat, enc_feat_mask, _, _ = model.encoder(feat=feat, feat_len=feat_len)
@@ -108,6 +153,11 @@ if __name__ == "__main__":
 
     model = load_asr_model()
 
+    # Load CCNN and create map
+    device = torch.device(DEVICE)
+    ccnn_model, ccnn_vocab = load_ccnn_model(device)
+    asr2ccnn_map = get_asr2ccnn_map(model.tokenizer, ccnn_vocab, device)
+
     # df = (
     #     pd.DataFrame({
     #         "text": pd.Series(id2text),
@@ -129,30 +179,46 @@ if __name__ == "__main__":
     # df.to_csv("test_transcripts.csv", index=False, sep='\t')
 
     ### Test
-    fileid = random.choice(list(id2text))
+    # fileid = random.choice(list(id2text))
+    fileid = "948d1cd7a7"
     text   = id2text[fileid]
     path   = id2wav[fileid]
 
     print(f"FileID: {fileid}   Reference Text: {text}  \nPath: {path}")
 
     infer_conf = {
-        "beam_size": 5,
+        "beam_size": 20,
         "temperature": 1.0,
         "length_penalty": 1.0,
-        "min_f2t_ratio": 3.0,
+        "min_f2t_ratio": 1.0,
 
         # optional fusions
-        "ctc_weight": 0.3,
+        "ctc_weight": 0.2,
         "ctc_temperature": 1.0,
 
         "lm_weight": 0.2,
         "lm_temperature": 1.0,
 
         # optional eos filtering
-        "eos_filtering": False,
+        "eos_filtering": True,
         "eos_threshold": 1.5,
+
+        # CCNN config
+        "ccnn_model": ccnn_model,
+        "asr2ccnn_map": asr2ccnn_map,
+        "ccnn_bos_id": ccnn_vocab.bos_id,
+        "ccnn_pad_id": ccnn_vocab.pad_id,
+        "ccnn_lm_weight": 0.8,
+        "ccnn_cons_weight": 1.0,
     }
 
-    # transcript = transcribe(path, model, decoder='builtin')
+    print(f"{"- "*10}\nRef. Text: {text}")
+    infer_conf["ccnn_model"] = None
     transcript = transcribe(path, model, decoding_tech='ccnn_guided', infer_conf=infer_conf)
-    print(f"{"- "*10}\nRef. Text: {text}\nGen. Text: {transcript}\n{"- "*10}")
+    gen = transcript['text'].replace("*", " ")
+    print(f"Gen. Text (No CCNN):      {gen}")
+    infer_conf["ccnn_model"] = ccnn_model
+    transcript = transcribe(path, model, decoding_tech='ccnn_guided', infer_conf=infer_conf)
+    gen = transcript['text'].replace("*", " ")
+    print(f"Gen. Text (CCNN):  {gen}")
+    print(f"{"- "*10}")

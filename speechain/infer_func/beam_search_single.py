@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 
 from speechain.infer_func.ctc_decoding import CTCPrefixScorer  # :contentReference[oaicite:2]{index=2}
 from speechain.utilbox.train_util import make_len_from_mask
@@ -57,7 +58,13 @@ def beam_search_single(
     lm_weight: float = 0.0,          # The weight for LM score interpolation (0.0 to disable)
     lm_temperature: float = 1.0,     # The temperature for the LM softmax
     lm_decode_fn=None,               # The LM decoder function, returns tuple where logits is [0]
-    lm_window_size: int | None = None # The context window size for the LM (None for full context)
+    lm_window_size: int | None = None, # The context window size for the LM (None for full context)
+    ccnn_model = None,               # The CCNN model
+    ccnn_lm_weight: float = 0.0,     # Weight for CCNN LM head
+    ccnn_cons_weight: float = 0.0,   # Weight for CCNN Consistency head
+    asr2ccnn_map: torch.Tensor = None, # Mapping from ASR token ID to CCNN token ID
+    ccnn_bos_id: int = None,         # CCNN BOS ID
+    ccnn_pad_id: int = None          # CCNN PAD ID
 ):
     """
     Beam Search for single file inference.
@@ -146,12 +153,79 @@ def beam_search_single(
             lm_scores = torch.log_softmax(lm_out[:, -1, :] / lm_temperature, dim=-1)
             next_token_scores = next_token_scores + lm_weight * lm_scores
 
+        # ---- CCNN LM fusion ----
+        if ccnn_model is not None and ccnn_lm_weight > 0:
+            # Map ASR IDs to CCNN IDs
+            hypo_ccnn = asr2ccnn_map[hypo_text]
+            hypo_ccnn[:, 0] = ccnn_bos_id  # Force BOS at start
+
+            # Prepare dummy candidates for LM head (B, T, 1) using CCNN PAD
+            dummy_cand = torch.full((beam_size, hypo_text.size(1), 1), ccnn_pad_id, dtype=torch.long, device=device)
+
+            # Ensure model is in eval mode
+            ccnn_model.eval()
+
+            # Forward pass for LM logits
+            # ccnn_model returns (lm_logits, cons_logits)
+            ccnn_lm_logits, _ = ccnn_model(hypo_ccnn, hypo_text_len, dummy_cand)
+
+            ccnn_lm_scores = torch.log_softmax(ccnn_lm_logits[:, -1, :], dim=-1)
+
+            # Map CCNN scores back to ASR vocabulary
+            # ccnn_lm_scores is (B, V_ccnn). We select columns corresponding to ASR tokens.
+            ccnn_lm_scores_mapped = ccnn_lm_scores.index_select(1, asr2ccnn_map)
+
+            next_token_scores = next_token_scores + ccnn_lm_weight * ccnn_lm_scores_mapped
+
+
         # total scores for all expansions: (beam, V)
         total_scores = next_token_scores + beam_scores.unsqueeze(-1)
 
         # pick top 2*beam among beam*V candidates
         flat_scores = total_scores.view(-1)  # (beam*V,)
         topk_scores, topk_ids = torch.topk(flat_scores, k=2 * beam_size, largest=True, sorted=True)
+
+        # ---- CCNN Consistency fusion ----
+        if ccnn_model is not None and ccnn_cons_weight > 0:
+            # Decode topk_ids to get beam index and token index
+            src_beams = torch.div(topk_ids, vocab_size, rounding_mode='floor')
+            tokens = topk_ids % vocab_size
+
+            # Initialize consistency scores
+            cons_scores_flat = torch.zeros_like(topk_scores)
+
+            # Process each beam that contributed to top-k
+            unique_beams = torch.unique(src_beams)
+            for b_idx in unique_beams:
+                mask = (src_beams == b_idx)
+                beam_tokens = tokens[mask]
+
+                if len(beam_tokens) > 0:
+                    b_idx_int = int(b_idx.item())
+                    # Prepare inputs: (1, T) and (1, T, K)
+                    cur_hypo = hypo_text[b_idx_int].unsqueeze(0) # ASR IDs
+                    cur_hypo_ccnn = asr2ccnn_map[cur_hypo]
+                    cur_hypo_ccnn[:, 0] = ccnn_bos_id
+
+                    cur_len = hypo_text_len[b_idx_int].unsqueeze(0)
+
+                    K = len(beam_tokens)
+                    T = cur_hypo.size(1)
+
+                    # Map candidates to CCNN IDs
+                    cand_ccnn = asr2ccnn_map[beam_tokens]
+                    cand = cand_ccnn.view(1, 1, K).expand(1, T, K)
+
+                    _, ccnn_cons_logits = ccnn_model(cur_hypo_ccnn, cur_len, cand)
+                    cons_logit_last = ccnn_cons_logits[0, -1, :] # (K,)
+                    cons_score_val = F.logsigmoid(cons_logit_last)
+
+                    cons_scores_flat[mask] = cons_score_val
+
+            topk_scores = topk_scores + ccnn_cons_weight * cons_scores_flat
+            # Re-sort after updating scores
+            topk_scores, sort_idx = torch.sort(topk_scores, descending=True)
+            topk_ids = topk_ids[sort_idx]
 
         next_beam = []
         for rank in range(topk_ids.numel()):
