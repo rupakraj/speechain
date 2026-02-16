@@ -55,8 +55,7 @@ sample_rate=16000
 spk_emb_model=
 # tokenization-related arguments
 token_type=char
-# empty vocab_size will be automatically initialized if token_type is 'word' or 'sentencepiece':
-# 1000 for dump_part '100'; 5000 for dump_part '460'; 10000 for dump_part '960'
+# not significant for char
 vocab_size=
 # sentencepiece-specific arguments, won't be used if token_type is 'char' or 'word'
 model_type=
