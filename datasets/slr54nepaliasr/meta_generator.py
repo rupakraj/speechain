@@ -29,12 +29,31 @@ def ne_text_process(text:str, txt_format: str = "plain")->str:
     text = text.strip()
     return text
 
+# remove <unk> tokens if any from the dataset
+def filter_df_by_vocab(df, vocab_path, text_col ='text'):
+    with open(vocab_path, "r", encoding="utf-8") as vocab_file:
+        vocab_chars = set()
+        vocab_chars.add(' ')
+
+        for line in vocab_file:
+            token = line.strip('\n')
+            if token:
+                vocab_chars.update(token)
+
+    def is_valid_text(text):
+        if pd.isna(text):
+            return False
+        return all(ch in vocab_chars for ch in text)
+
+    mask = df[text_col].apply(is_valid_text)
+    return df[mask].reset_index(drop=True)
+
 
 class SLR54MetaGenerator(SpeechTextMetaGenerator):
     # no additional argument needed as the --src_path is enough
 
     def generate_meta_dict(self, src_path: str, txt_format: str, **kwargs) \
-            -> Dict[str, Dict[str, Dict[str, str] or List[str]]]:
+            -> Dict[str, Dict[str, Dict[str, str] or List[str]]]: # type: ignore
         """
             - Read tsv file
             - split the train/dev/test as 80:10:10
@@ -47,7 +66,8 @@ class SLR54MetaGenerator(SpeechTextMetaGenerator):
             raise FileNotFoundError(f"Tsv file not found in {tsv_path}")
 
         # read tsv file
-        df = pd.read_csv(tsv_path, sep="\t", header=None, names=["fileid","speaker", "text"])
+        df_all = pd.read_csv(tsv_path, sep="\t", header=None, names=["fileid","speaker", "text"])
+        df = filter_df_by_vocab(df_all, "ne.vocab")
 
         def populate_file_path(id):
             return os.path.join(src_path,"data", "wav", id[:2], f"{id}.wav")
@@ -55,7 +75,7 @@ class SLR54MetaGenerator(SpeechTextMetaGenerator):
             return os.path.join(src_path,"data", "npz", id[:2], f"{id}.npz")
 
         df['path'] = df["fileid"].map(populate_file_path)
-        df['npz_path'] = df["fileid"].map(populate_file_path)
+        # df['npz_path'] = df["fileid"].map(populate_npz_path)
 
         # Define the labels and their corresponding ratios
         labels = ['train', 'test', 'valid']
@@ -69,7 +89,7 @@ class SLR54MetaGenerator(SpeechTextMetaGenerator):
                                     idx2spk  = dict(),
                                     idx2gen  = dict(),
                                     idx2text = dict(),
-                                    idx2feat = dict(),
+                                    # idx2feat = dict(),
                                 )
             meta_dict[subset][f'idx2no-punc_text'] = dict()
 
@@ -77,7 +97,7 @@ class SLR54MetaGenerator(SpeechTextMetaGenerator):
             split = row['split']
             fileid = row['fileid']
             meta_dict[split]['idx2wav'][fileid] = row['path']
-            meta_dict[split]['idx2feat'][fileid] = row['npz_path']
+            # meta_dict[split]['idx2feat'][fileid] = row['npz_path']
             meta_dict[split]['idx2spk'][fileid] = row['speaker']
             meta_dict[split]['idx2text'][fileid] = row['text']
             meta_dict[split]['idx2no-punc_text'][fileid] = row['text']
@@ -97,3 +117,4 @@ class SLR54MetaGenerator(SpeechTextMetaGenerator):
 
 if __name__ == '__main__':
     SLR54MetaGenerator().main()
+
