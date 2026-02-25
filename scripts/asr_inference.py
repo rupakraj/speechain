@@ -13,9 +13,9 @@ from speechain.runner import Runner
 tqdm.pandas()
 
 SPEECHAIN_ROOT = "/home/is/r-ghimire/speechain"
-EXP_DIR    = f"{SPEECHAIN_ROOT}/recipes/asr/slr54nepaliasr/exp/ne_char_conformer-small-v2_lr2e-3"
+EXP_DIR    = f"{SPEECHAIN_ROOT}/recipes/asr/slr54nepaliasr/exp/ne_char_conformer-large-v2_lr2e-3"
 CHECKPOINT = f"{EXP_DIR}/models/10_valid_accuracy_average.pth"
-DEVICE = "cuda:2"
+DEVICE = "cuda:1"
 
 
 def load_asr_model():
