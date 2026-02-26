@@ -1,0 +1,255 @@
+##############################################################################
+# Model: Conformer-ASR equivalent to NepConformer
+# Tokens: Character
+# Training: train of SLR54NepaliASR
+# Validation: valid of SLR54NepaliASR
+# Testing: test of SLR54NepaliASR
+
+# Authors: Rupak Raj (rughimire)
+# ############################################################################
+
+dataset_path: datasets/
+dataset: slr54nepaliasr
+train_set: train
+test_set: test
+valid_set: valid
+
+# waveform-related
+wav_format: wav16000
+sample_rate: 16000
+
+# tokenizer-related
+txt_format: no-punc
+vocab_subset: train
+token_type: char
+token_num:
+
+# batch-related
+batch_len: 1.8e7 # 4.8e7  # for this model bach length 4.8e7 is too large
+valid_batch_len: 1.0e7
+
+# model-related
+ctc_weight: 0.2
+label_smoothing: 0.05
+d_model: 256
+num_heads: 4
+fdfwd_dim: 1536
+dropout: 0.3
+
+# optimizer-related
+warmup_steps: 10000
+
+# running-related
+seed: 0
+num_workers: 8
+pin_memory: True
+non_blocking: True
+
+# gradient-related
+accum_grad: 1
+ft_factor: 1.0
+grad_clip: 5.0
+
+# multi-GPU-related
+ngpu: 2 # please change ngpu based on the situation of your machine
+gpus: [2,3] # null means the GPUs with the largest free memory will be used
+
+# training-related
+train: True
+best_model_selection: !tuple (valid, accuracy, max, 10)
+early_stopping_patience: 20
+num_epochs: 100
+
+# snapshot-related
+visual_snapshot_number: 3
+visual_snapshot_interval: 5
+
+# testing-related
+# test: False
+# test_model: 10_valid_accuracy_average
+
+# This argument is shared by data_cfg and train_cfg
+data_root: !ref <dataset_path>/<dataset>/data
+
+
+
+#################################
+# Model Inference Configuration #
+#################################
+infer_cfg:
+  shared_args:
+    beam_size: 16
+  exclu_args:
+    # ASR-only decoding
+    - ctc_weight: 0.2
+    # ASR-LM decoding
+    # - ctc_weight: 0.3
+    #  lm_weight: 0.6
+
+
+
+##############################
+# Data Loading Configuration #
+##############################
+data_cfg:
+  train:
+    type: block.BlockIterator
+    conf:
+      dataset_type: speech_text.SpeechTextDataset
+      dataset_conf:
+        main_data:
+          feat: !ref <data_root>/<wav_format>/<train_set>/idx2wav
+          text: !ref <data_root>/<wav_format>/<train_set>/idx2<txt_format>_text
+        use_speed_perturb: True
+
+      data_len: !ref <data_root>/<wav_format>/<train_set>/idx2wav_len
+      shuffle: True
+      is_descending: True
+      batch_len: !ref <batch_len>
+
+  valid:
+    type: block.BlockIterator
+    conf:
+      dataset_type: speech_text.SpeechTextDataset
+      dataset_conf:
+        main_data:
+          feat: !ref <data_root>/<wav_format>/<valid_set>/idx2wav
+          text: !ref <data_root>/<wav_format>/<valid_set>/idx2<txt_format>_text
+
+      shuffle: False
+      data_len: !ref <data_root>/<wav_format>/<valid_set>/idx2wav_len
+      batch_len: !ref <valid_batch_len>
+
+  # the cascading structure is needed inorder to fix the iterator while runnign the test
+  test:
+    test:
+      type: block.BlockIterator
+      conf:
+        dataset_type: speech_text.SpeechTextDataset
+        dataset_conf:
+          main_data:
+            feat: !ref <data_root>/<wav_format>/<test_set>/idx2wav
+            text: !ref <data_root>/<wav_format>/<test_set>/idx2<txt_format>_text
+
+        data_len: !ref <data_root>/<wav_format>/<test_set>/idx2wav_len
+        shuffle: False
+        batch_len: !ref <valid_batch_len>
+
+
+####################################
+# Model Construction Configuration #
+####################################
+train_cfg:
+  model:
+    model_type: ar_asr.ARASR
+    model_conf:
+      customize_conf:
+        ctc_weight: !ref <ctc_weight>
+        token_type: !ref <token_type>
+        token_path: !ref <data_root>/<token_type>/<vocab_subset>/<token_num>/<txt_format>
+        # LM paths commented out - train LM first if you want ASR-LM decoding
+        # lm_model_cfg: recipes/lm/librispeech/lm_text/exp/100-bpe5k_transformer/train_cfg.yaml
+        # lm_model_path: recipes/lm/librispeech/lm_text/exp/100-bpe5k_transformer/models/5_valid_text_ppl_average.pth
+
+    module_conf:
+      frontend:
+        type: frontend.speech2mel.Speech2MelSpec
+        conf:
+          sr: !ref <sample_rate>
+          preemphasis: 0.97
+          hop_length: 0.010
+          win_length: 0.025
+          n_mels: 80
+
+      normalize: True
+
+      specaug:
+        freq_mask_width: 27
+        freq_mask_num: 2
+        time_mask_width: 0.05
+        time_mask_num: 4
+
+      enc_prenet:
+        type: prenet.conv2d.Conv2dPrenet
+        conf:
+          conv_dims:
+            - !ref <d_model>
+            - !ref <d_model>
+          conv_kernel: 5
+          conv_stride: 2
+          conv_batchnorm: true
+          conv_activation: LeakyReLU
+          lnr_dims: !ref <d_model>
+
+      encoder:
+        type: conformer.encoder.ConformerEncoder
+        conf:
+          posenc_dropout: !ref <dropout>
+          emb_scale: False
+          d_model: !ref <d_model>
+          num_heads: !ref <num_heads>
+          num_layers: 18
+          att_dropout: !ref <dropout>
+          fdfwd_dim: !ref <fdfwd_dim>
+          fdfwd_activation: GELU
+          fdfwd_dropout: !ref <dropout>
+          res_dropout: !ref <dropout>
+          layernorm_first: true
+
+      dec_emb:
+        type: prenet.embed.EmbedPrenet
+        conf:
+          embedding_dim: !ref <d_model>
+
+      decoder:
+        type: transformer.decoder.TransformerDecoder
+        conf:
+          posenc_dropout: !ref <dropout>
+          posenc_scale: false
+          emb_layernorm: true
+          emb_scale: false
+          d_model: !ref <d_model>
+          num_heads: !ref <num_heads>
+          num_layers: 6
+          att_dropout: !ref <dropout>
+          fdfwd_dim: !ref <fdfwd_dim>
+          fdfwd_activation: GELU
+          fdfwd_dropout: !ref <dropout>
+          res_dropout: !ref <dropout>
+          layernorm_first: true
+
+    criterion_conf:
+      ce_loss:
+        label_smoothing: !ref <label_smoothing>
+        temperature: 1.0
+        length_normalized: false
+
+        # CCNN args (new)
+        ccnn_import: speechain.model.ccnn:CCNN
+        ccnn_ckpt: /home/is/r-ghimire/decoding/checkpoint/ccnn_lstm_slr54_ep50_new_tokenizer.pt
+        ccnn_pad_id: 0          # must match your tokenizer PAD id
+        ccnn_bos_id: 65
+
+        ccnn_head: "cons"             # "lm" or "cons" or "mix"
+        ccnn_lm_temperature: 1.0      # soften LM distribution
+        ccnn_cons_temperature: 2.0    # soften CCNN distribution
+        ccnn_cons_beta: 0.5           # weight for cons logits in fusion .3 ~ 0.8 (start at 0.5)
+        ccnn_mix_alpha: 1.0           # 1.0 = pure CCNN, 0.0 = uniform
+        # only needed if your checkpoint does NOT store these and you want to override
+        ccnn_d_model: 256
+        ccnn_n_layers: 2
+        ccnn_dropout: 0.1
+
+
+  optim_sches:
+    type: noam.Noamlr
+    conf:
+      optim_type: AdamW
+      optim_conf:
+        weight_decay: 1e-3
+        lr: 0.002 # 2e-3
+        betas:
+          - 0.9
+          - 0.98
+        eps: 1.0e-9
+      warmup_steps: !ref <warmup_steps>

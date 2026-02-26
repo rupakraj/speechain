@@ -1,0 +1,10 @@
+bash run.sh \
+    --exp_cfg ne_char_conformer-large-v2_lr2e-3-ccnn-only \
+    --train_num_workers 4 \
+    --valid_num_workers 4 \
+    --test_num_workers 4 \
+    --ngpu 2 \
+    --train true \
+    --test false \
+    --resume false \
+    --test_model 10_valid_accuracy_average \

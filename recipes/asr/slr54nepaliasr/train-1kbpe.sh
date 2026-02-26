@@ -1,0 +1,10 @@
+bash run.sh \
+    --exp_cfg ne_bpe1k_conformer-large-v2_lr2e-3 \
+    --train_num_workers 2 \
+    --valid_num_workers 2 \
+    --test_num_workers 2 \
+    --ngpu 2 \
+    --train true \
+    --test false \
+    --resume false \
+    --test_model 10_valid_accuracy_average \
