@@ -56,11 +56,13 @@ spk_emb_model=
 # tokenization-related arguments
 token_type=char
 # not significant for char
-vocab_size=
+# vocab_size=1000
 # sentencepiece-specific arguments, won't be used if token_type is 'char' or 'word'
-model_type=
-character_coverage=1.0
-split_by_whitespace=true
+
+# model_type: only applicable for sentencepiece bpe or unigram
+# model_type=bpe
+# character_coverage=1.0
+# split_by_whitespace=true
 # arguments used by stat_info_generator.py
 txt_format=no-punc
 
