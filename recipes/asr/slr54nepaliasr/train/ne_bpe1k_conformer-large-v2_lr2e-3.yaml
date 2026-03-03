@@ -25,7 +25,7 @@ token_type: sentencepiece
 token_num: bpe1k
 
 # batch-related
-batch_len: 2.8e7  # for this model bach length 4.8e7 is too large
+batch_len: 1.8e7  # for this model bach length 4.8e7 is too large
 valid_batch_len: 1.0e7
 
 # model-related
@@ -52,7 +52,7 @@ grad_clip: 5.0
 
 # multi-GPU-related
 ngpu: 2 # please change ngpu based on the situation of your machine
-gpus: [2,3] # null means the GPUs with the largest free memory will be used
+gpus: [0,1] # null means the GPUs with the largest free memory will be used
 
 # training-related
 train: True
@@ -106,6 +106,7 @@ data_cfg:
       shuffle: True
       is_descending: True
       batch_len: !ref <batch_len>
+      # batches_per_epoch: 10 # only for testing
 
   valid:
     type: block.BlockIterator
@@ -119,6 +120,7 @@ data_cfg:
       shuffle: False
       data_len: !ref <data_root>/<wav_format>/<valid_set>/idx2wav_len
       batch_len: !ref <valid_batch_len>
+      # batches_per_epoch: 5 # only for testing
 
   # the cascading structure is needed inorder to fix the iterator while runnign the test
   test:

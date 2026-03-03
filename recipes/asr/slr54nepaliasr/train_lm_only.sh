@@ -4,7 +4,7 @@ bash run.sh \
     --valid_num_workers 4 \
     --test_num_workers 4 \
     --ngpu 2 \
-    --train true \
-    --test false \
+    --train false \
+    --test true \
     --resume false \
     --test_model 10_valid_accuracy_average \

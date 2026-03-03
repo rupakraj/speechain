@@ -25,7 +25,7 @@ token_type: char
 token_num:
 
 # batch-related
-batch_len: 2.8e7  # for this model bach length 4.8e7 is too large
+batch_len: 1.8e7  # for this model bach length 4.8e7 is too large
 valid_batch_len: 1.0e7
 
 # model-related
@@ -51,8 +51,8 @@ ft_factor: 1.0
 grad_clip: 5.0
 
 # multi-GPU-related
-ngpu: 3 # please change ngpu based on the situation of your machine
-gpus: [0,1,2] # null means the GPUs with the largest free memory will be used
+ngpu: 2 # please change ngpu based on the situation of your machine
+gpus: [0,1] # null means the GPUs with the largest free memory will be used
 
 # training-related
 train: True

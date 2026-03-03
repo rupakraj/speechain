@@ -1,8 +1,8 @@
 bash run.sh \
     --exp_cfg ne_bpe1k_conformer-large-v2_lr2e-3 \
-    --train_num_workers 2 \
-    --valid_num_workers 2 \
-    --test_num_workers 2 \
+    --train_num_workers 4 \
+    --valid_num_workers 4 \
+    --test_num_workers 4 \
     --ngpu 2 \
     --train true \
     --test false \

@@ -77,14 +77,28 @@ data_root: !ref <dataset_path>/<dataset>/data
 # Model Inference Configuration #
 #################################
 infer_cfg:
-  shared_args:
-    beam_size: 16
-  exclu_args:
-    # ASR-only decoding
-    - ctc_weight: 0.2
-    # ASR-LM decoding
-    # - ctc_weight: 0.3
-    #  lm_weight: 0.6
+  beam_size: 16
+  ctc_weight: 0.2
+  ccnn_weight: 0.2
+  ccnn_head: "cons"
+  ccnn_cons_beta: 0.5
+  ccnn_temperature: 1.0
+  ccnn_lm_temperature: 1.0
+  ccnn_cons_temperature: 1.0
+
+# infer_cfg:
+#   shared_args:
+#     - beam_size: 16
+#   exclu_args:
+#     # ASR-only decoding
+#     - ctc_weight: 0.2
+#     #  lm_weight: 0.6
+#     - ccnn_weight: 0.2
+#     - ccnn_head: "cons"
+#     - ccnn_cons_beta: 0.5
+#     - ccnn_temperature: 1.0
+#     - ccnn_lm_temperature: 1.0
+#     - ccnn_cons_temperature: 1.0
 
 
 
