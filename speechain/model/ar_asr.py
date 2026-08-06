@@ -17,10 +17,13 @@ import yaml
 from speechain.criterion.accuracy import Accuracy
 from speechain.criterion.att_guid import AttentionGuidance
 from speechain.criterion.cross_entropy import CrossEntropy
+from speechain.criterion.ccnn_cross_entropy import CrossEntropy_CCNN
 from speechain.criterion.ctc import CTCLoss
 from speechain.criterion.error_rate import ErrorRate
 from speechain.criterion.perplexity import Perplexity
 from speechain.infer_func.beam_search import beam_searching
+# from speechain.infer_func.beam_search_topk import beam_searching
+# from speechain.infer_func.beam_search_ccnn import beam_searching
 from speechain.model.abs import Model
 from speechain.module.decoder.ar_asr import ARASRDecoder
 from speechain.module.encoder.asr import ASREncoder
@@ -28,6 +31,7 @@ from speechain.module.postnet.token import TokenPostnet
 from speechain.module.standalone.lm import LanguageModel
 from speechain.tokenizer.char import CharTokenizer
 from speechain.tokenizer.sp import SentencePieceTokenizer
+from speechain.tokenizer.modified_bpe import ModifiedBPE
 from speechain.utilbox.eval_util import get_word_edit_alignment
 from speechain.utilbox.import_util import parse_path_args
 from speechain.utilbox.tensor_util import to_cpu
@@ -168,10 +172,14 @@ class ARASR(Model):
             self.tokenizer = SentencePieceTokenizer(
                 token_path, copy_path=self.result_path
             )
+        elif token_type.lower() == "modified_bpe":
+            self.tokenizer = ModifiedBPE(
+                token_path, copy_path=self.result_path
+            )
         else:
             raise ValueError(
                 f"Unknown token_type {token_type}. "
-                f"Currently, {self.__class__.__name__} supports one of ['char', 'sentencepiece']."
+                f"Currently, {self.__class__.__name__} supports one of ['char', 'sentencepiece', 'modified_bpe']."
             )
 
         # initialize the sampling rate, mainly used for visualizing the input audio during training
@@ -280,7 +288,8 @@ class ARASR(Model):
         # initialize cross-entropy loss for the encoder-decoder
         if ce_loss is None:
             ce_loss = {}
-        self.ce_loss = CrossEntropy(**ce_loss)
+        # self.ce_loss = CrossEntropy(**ce_loss)
+        self.ce_loss = CrossEntropy_CCNN(**ce_loss)
 
         # initialize cross-entropy loss for the internal LM
         if self.ilm_weight > 0:
@@ -866,7 +875,14 @@ class ARASR(Model):
                 padding_idx=self.tokenizer.ignore_idx,
                 **infer_conf,
             )
+            # print(infer_results)
             hypo_text = infer_results["hypo_text"]
+
+            # fix of beam search output shape the error actually ocure when training on the BPE tokenizer
+            batch_size = feat.size(0)
+            sent_per_beam = hypo_text.size(0) // batch_size
+            hypo_text = hypo_text.view(batch_size, sent_per_beam, -1)
+
             hypo_text_len = infer_results["hypo_text_len"]
             feat_token_len_ratio = infer_results["feat_token_len_ratio"]
             hypo_text_confid = infer_results["hypo_text_confid"]
@@ -919,6 +935,12 @@ class ARASR(Model):
                 hypo_text_confid = torch.sum(hypo_text_prob, dim=-1) / (
                     hypo_text_len**length_penalty
                 )
+        # fix of beam search output shape for teacher forcing path
+        if teacher_forcing:
+            batch_size = feat.size(0)
+            # hypo_text from teacher forcing has shape (batch_size, seq_len)
+            # We need to reshape it to (batch_size, 1, seq_len) for compatibility
+            hypo_text = hypo_text.unsqueeze(1)  # Add beam dimension
 
         # turn the data all the unsupervised metrics into the cpu version (List)
         # consider one <sos/eos> at the end, so hypo_text_len is added to 1
@@ -932,20 +954,38 @@ class ARASR(Model):
         # recover the text tensors back to text strings (removing the padding and sos/eos tokens)
         # hypo_text = [self.tokenizer.tensor2text(hypo[(hypo != self.tokenizer.ignore_idx) &
         #                                              (hypo != self.tokenizer.sos_eos_idx)]) for hypo in hypo_text]
-        hypo_text = [self.tokenizer.tensor2text(hypo) for hypo in hypo_text]
+
+        # hypo_text = [self.tokenizer.tensor2text(hypo) for hypo in hypo_text]
+        # hypo_text: (B, K, T) on GPU/CPU
+        row_token_ids = hypo_text.tolist() if isinstance(hypo_text, torch.Tensor) else hypo_text
+        hypo_text_str = []
+        for b in range(hypo_text.size(0)):
+            hyp_k = []
+            for k in range(hypo_text.size(1)):
+                hyp_k.append(self.tokenizer.tensor2text(hypo_text[b, k]))
+            hypo_text_str.append(hyp_k)
+        hypo_text = hypo_text_str
+
 
         # in the decoding-only mode, only the hypothesis-related results will be returned
+        sep = " ||| "
         outputs.update(
-            text=dict(format="txt", content=hypo_text),
+            # text=dict(format="txt", content=hypo_text),
+            text=dict(format="txt", content=[x for x in hypo_text]),
             text_len=dict(format="txt", content=hypo_text_len),
             feat_token_len_ratio=dict(format="txt", content=feat_token_len_ratio),
             text_confid=dict(format="txt", content=hypo_text_confid),
+            token_ids=dict(format="txt", content=row_token_ids),
         )
 
         # add the attention matrix into the output Dict, only used for model visualization during training
         # because it will consume too much time for saving the attention matrices of all testing samples during testing
         if return_att:
             outputs.update(att=hypo_att)
+
+        # If we're only decoding, skip any reference-based processing.
+        if decode_only:
+            return outputs
 
         # recover the text tensors back to text strings (removing the padding and sos/eos tokens)
         text = [
@@ -967,28 +1007,59 @@ class ARASR(Model):
             deletion_list,
             substitution_list,
         ) = ({}, [], [], [], [], [], [])
+
         # loop each sentence
         for i in range(len(text)):
             # add the confidence into instance_reports.md
             if "Hypothesis Confidence" not in instance_report_dict.keys():
                 instance_report_dict["Hypothesis Confidence"] = []
-            instance_report_dict["Hypothesis Confidence"].append(
-                f"{hypo_text_confid[i]:.6f}"
-            )
 
+            confid_value = hypo_text_confid[i]
+            if isinstance(confid_value, (list, tuple)):
+                # If it's a list/tuple, take the mean or first element
+                confid_value = sum(confid_value) / len(confid_value) if confid_value else 0.0
+            elif isinstance(confid_value, torch.Tensor):
+                # If it's a tensor, convert to scalar
+                confid_value = confid_value.item() if confid_value.numel() == 1 else confid_value.mean().item()
+
+            instance_report_dict["Hypothesis Confidence"].append(
+                f"{confid_value:.6f}"
+            )
             # add the frame-token length ratio into instance_reports.md
             if "Feature-Token Length Ratio" not in instance_report_dict.keys():
                 instance_report_dict["Feature-Token Length Ratio"] = []
+
+            ratio_value = feat_token_len_ratio[i]
+            if isinstance(ratio_value, (list, tuple)):
+                # If it's a list/tuple, take the mean or first element
+                ratio_value = sum(ratio_value) / len(ratio_value) if ratio_value else 0.0
+            elif isinstance(ratio_value, torch.Tensor):
+                # If it's a tensor, convert to scalar
+                ratio_value = ratio_value.item() if ratio_value.numel() == 1 else ratio_value.mean().item()
+
             instance_report_dict["Feature-Token Length Ratio"].append(
-                f"{feat_token_len_ratio[i]:.2f}"
+                f"{ratio_value:.2f}"
             )
 
             # --- 4. Supervised Metrics Calculation (Reference is involved here)  --- #
             if not decode_only:
                 # obtain the cer and wer metrics
                 cer, wer = self.error_rate(hypo_text=hypo_text[i], real_text=text[i])
+
+                if isinstance(hypo_text[i], list):
+                    # print(f"DEBUG: hypo_text[{i}] is list, joining: {hypo_text[i]}")
+                    hypo_text_str = ''.join(hypo_text[i])
+                else:
+                    hypo_text_str = hypo_text[i]
+
+                if isinstance(text[i], list):
+                    # print(f"DEBUG: text[{i}] is list, joining: {text[i]}")
+                    text_str = ''.join(text[i])
+                else:
+                    text_str = text[i]
+
                 i_num, d_num, s_num, align_table = get_word_edit_alignment(
-                    hypo_text[i], text[i]
+                    hypo_text_str, text_str
                 )
 
                 # record the string of hypothesis-reference alignment table
@@ -1087,9 +1158,11 @@ class MultiDataLoaderARASR(ARASR):
 
         # cross-entropy will be initialized no matter whether ce_loss is given or not
         self.ce_loss = (
-            recur_init_loss_by_dict(ce_loss, CrossEntropy)
+            # recur_init_loss_by_dict(ce_loss, CrossEntropy)
+            recur_init_loss_by_dict(ce_loss, CrossEntropy_CCNN)
             if ce_loss is not None
-            else CrossEntropy()
+            # else CrossEntropy_CCNN()
+            else CrossEntropy_CCNN()
         )
 
         # only initialize ctc loss if it is given

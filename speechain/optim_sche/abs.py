@@ -130,7 +130,7 @@ class OptimScheduler(ABC):
         self.optimizer = optim_class(params=params, **optim_conf)
 
         # Initialize the gradient scaler for AMP training
-        self.scaler = GradScaler() if use_amp else None
+        self.scaler = torch.amp.GradScaler('cuda') if use_amp else None
 
         # initialize the customized part of the scheduler
         self.sche_init(**sche_conf)

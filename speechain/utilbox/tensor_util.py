@@ -19,6 +19,12 @@ def to_native(x, tgt: str):
             x = [x.item()]
             if tgt == "numpy":
                 x = np.array(x)
+        elif len(x.shape) == 1:
+            # Handle 1D tensors properly
+            if tgt == "list":
+                x = x.tolist()
+            elif tgt == "numpy":
+                x = x.numpy()
         else:
             if tgt == "list":
                 assert hasattr(x, "tolist")
@@ -63,7 +69,12 @@ def to_cpu(inputs, tgt: str = "list", batch_idx: int = None):
     if isinstance(inputs, tuple):
         inputs = tuple([to_cpu(x, tgt, batch_idx) for x in inputs])
     elif isinstance(inputs, list):
-        inputs = [to_cpu(x, tgt, batch_idx) for x in inputs]
+        # Check if list contains tensors - if so, convert each tensor directly
+        if all(isinstance(x, torch.Tensor) for x in inputs):
+            inputs = [to_native(x.cpu(), tgt.lower()) for x in inputs]
+        else:
+            # Only recurse if list contains non-tensor elements
+            inputs = [to_cpu(x, tgt, batch_idx) for x in inputs]
     elif isinstance(inputs, dict):
         inputs = {k: to_cpu(v, tgt, batch_idx) for k, v in inputs.items()}
     elif isinstance(inputs, torch.Tensor):

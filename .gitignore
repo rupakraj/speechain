@@ -70,3 +70,5 @@ config/
 site/
 .ruff-cache/
 bak/
+
+decoding

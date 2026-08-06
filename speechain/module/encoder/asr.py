@@ -105,7 +105,8 @@ class ASREncoder(Module):
                 self, "frontend"
             ), "Currently, we don't support time-domain ASR. Please specify a feature extraction frontend!"
             # no amp operations for the frontend calculation to make sure the feature accuracy
-            with autocast(False):
+            # autocast()
+            with torch.amp.autocast_mode.autocast(device_type='cuda', enabled=False):
                 feat, feat_len = self.frontend(feat, feat_len)
 
         # feature normalization

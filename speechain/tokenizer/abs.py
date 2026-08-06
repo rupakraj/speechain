@@ -65,7 +65,7 @@ class Tokenizer(ABC):
             self.space_idx = None
 
         # save the backup if copy_path is given
-        if copy_path is not None:
+        if copy_path is not None and token_vocab != os.path.join(parse_path_args(copy_path), "token_vocab"):
             np.savetxt(
                 os.path.join(copy_path, "token_vocab"),
                 list(self.token2idx.keys()),
@@ -112,10 +112,40 @@ class Tokenizer(ABC):
         """
         token_list = []
         # sometimes there are non-tensor also, need fix
-        if hasattr(tensor, "tolist"):
-            seq = tensor.tolist()
+        # if hasattr(tensor, "tolist"):
+        #     seq = tensor.tolist()
+        # else:
+        #     seq = tensor
+
+        # if isinstance(tensor, torch.Tensor) and tensor.dim() == 0:
+        #     seq = [int(tensor.item())]
+        # elif isinstance(seq, int):
+        #     seq = [seq]
+        if isinstance(tensor, torch.Tensor):
+            if tensor.dim() == 0:
+                seq = [int(tensor.item())]
+            else:
+                seq = tensor.reshape(-1).tolist()
+
+        elif isinstance(tensor, (int, np.integer)):
+            seq = [int(tensor)]
+
+        elif isinstance(tensor, np.ndarray):
+            if tensor.ndim == 0:
+                seq = [int(tensor.item())]
+            else:
+                seq = tensor.reshape(-1).tolist()
+
         else:
-            seq = tensor
+            # If it's a scalar-like value
+            if isinstance(tensor, (float, np.floating)):
+                seq = [int(tensor)]
+            # If it's already a list/tuple of ids
+            elif isinstance(tensor, (list, tuple)):
+                seq = list(tensor)
+            else:
+                # last resort: try to wrap as single id (avoid iterating strings)
+                seq = [tensor]
 
         for idx in seq:
             if idx in [self.sos_eos_idx, self.ignore_idx]:
@@ -123,9 +153,11 @@ class Tokenizer(ABC):
             # the space tokens will be replaced by a blank
             elif self.space_idx is not None and idx == self.space_idx:
                 token_list.append(" ")
-            # the unknown tokens will be replaced by a star symbol '*'
+            # the unknown tokens will be replaced by Space
+            # todo: this may have sideeffect on other tokenizer.
+            # real issue I guesss is the character tokenizer
             elif idx == self.unk_idx:
-                token_list.append("*")
+                token_list.append(" ")
             else:
                 token_list.append(self.idx2token[idx])
         return "".join(token_list)

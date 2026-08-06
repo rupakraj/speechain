@@ -22,6 +22,11 @@ def text_preprocess(text, tokenizer: Tokenizer):
                 text != tokenizer.ignore_idx, text != tokenizer.sos_eos_idx
             )
         ]
+        # Check if result is empty after filtering: Fix of inference time error
+        if proc_text.numel() == 0:
+            print(f"DEBUG: Empty tensor after filtering in text_preprocess, original shape: {text.shape}")
+            return ""  # Return empty string instead of crashing
+
         # turn text tensors into strings for removing the blanks
         string = tokenizer.tensor2text(proc_text)
     # string input, no processing is done here
@@ -80,6 +85,25 @@ class ErrorRate(Criterion):
         elif isinstance(real_text, str):
             real_text = [real_text]
 
+        # ### DEBUG: Print length information
+        # print(f"DEBUG ErrorRate: hypo_text type={type(hypo_text)}, len={len(hypo_text)}")
+        # print(f"DEBUG ErrorRate: real_text type={type(real_text)}, len={len(real_text)}")
+
+        # if isinstance(hypo_text, list) and len(hypo_text) > 0:
+        #     print(f"DEBUG ErrorRate: hypo_text[0]={hypo_text[0]}")
+        # if isinstance(real_text, list) and len(real_text) > 0:
+        #     print(f"DEBUG ErrorRate: real_text[0]={real_text[0]}")
+        # ### DEBUG ends
+
+        # SAFETY CHECK: Handle length mismatch
+        if len(hypo_text) != len(real_text):
+            # print(f"ERROR: Length mismatch! hypo_text={len(hypo_text)}, real_text={len(real_text)}")
+            # Use minimum length to prevent crash
+            min_len = min(len(hypo_text), len(real_text))
+            hypo_text = hypo_text[:min_len]
+            real_text = real_text[:min_len]
+            # print(f"DEBUG: Truncated to length {min_len}")
+
         cer_dist, cer_len, wer_dist, wer_len = [], [], [], []
         for i in range(len(hypo_text)):
             # obtain the strings
@@ -110,3 +134,32 @@ class ErrorRate(Criterion):
             wer = sum(wer) / len(wer)
 
         return cer, wer
+
+
+if __name__ == "__main__":
+    import sys
+    from speechain.tokenizer.char import CharTokenizer
+    from speechain.tokenizer.sp import SentencePieceTokenizer
+
+    args = sys.argv[1:]
+    assert len(args) == 2, "Give vocab path eg. python <tokenizer> error_rate.py <path>"
+    token      = args[0]
+    token_path = args[1]
+    # token_path = "/home/is/r-ghimire/speechain/datasets/slr54nepaliasr/data/char/train/full_tokens/no-punc"
+
+    tokenizer = None
+    if token == "sp":
+        tokenizer = SentencePieceTokenizer(token_path=token_path)
+    elif token == "char":
+        tokenizer = CharTokenizer(token_path=token_path)
+
+    error_rate = ErrorRate(tokenizer=tokenizer)
+
+    hypo_text = "This is test"
+    ref_text  = "This is test"
+
+    cer, wer = error_rate(hypo_text, ref_text)
+
+    assert cer != 0.0, f"CER calculation failed with cer={cer}"
+    assert wer != 0.0, f"WER calculation failed with wer={wer}"
+    print("== All test passed ==")

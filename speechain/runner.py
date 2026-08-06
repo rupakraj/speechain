@@ -760,6 +760,7 @@ class Runner(object):
                 checkpoint = torch.load(
                     os.path.join(args.train_result_path, "checkpoint.pth"),
                     map_location=model.device,
+                    weights_only=False,
                 )
                 for name in optim_sches.keys():
                     optim_sches[name].load_state_dict(checkpoint["optim_sches"][name])
@@ -797,6 +798,7 @@ class Runner(object):
             checkpoint = torch.load(
                 os.path.join(args.train_result_path, "checkpoint.pth"),
                 map_location=model.device,
+                weights_only=False,
             )
             # load the latest training epoch
             start_epoch = checkpoint["start_epoch"]
@@ -1068,7 +1070,7 @@ class Runner(object):
                 # whether to skip the model forward part and model optimization part
                 if not args.dry_run:
                     # --- model forward part --- #
-                    with autocast(enabled=args.use_amp):
+                    with torch.amp.autocast_mode.autocast('cuda', enabled=args.use_amp):
                         with cls.measure_time(
                             None if monitor is None else monitor.train_monitor
                         )("model_forward_time"):

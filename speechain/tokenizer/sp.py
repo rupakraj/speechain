@@ -64,7 +64,9 @@ class SentencePieceTokenizer(Tokenizer):
         Returns:
 
         """
-        if isinstance(tensor, torch.Tensor):
+        if isinstance(tensor, int):
+            tensor = torch.LongTensor([tensor])
+        elif isinstance(tensor, torch.Tensor):
             tensor = tensor.tolist()
         text = self.sp_model.decode_ids(
             [t for t in tensor if t not in [self.sos_eos_idx, self.ignore_idx]]

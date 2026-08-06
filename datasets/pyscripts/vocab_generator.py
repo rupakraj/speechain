@@ -152,7 +152,12 @@ def generate_vocab_sentencepiece(save_path: str, text_path: str, txt_format: str
     # update the output path and create the folder
     save_path = os.path.join(save_path, f"{model_type}{get_readable_number(vocab_size)}", txt_format)
     os.makedirs(save_path, exist_ok=True)
-    idx2text_path = os.path.join(text_path, f'idx2{txt_format}_text')
+
+    #TODO: Check this -> this may be fine for english but for other langauge the id also got
+    #                    used by the tokenizer. So is supposed to be a bug
+    idx2text_path  = os.path.join(text_path, f'idx2{txt_format}_text')
+    text_only_path = os.path.join(text_path, f'textonly')
+
 
     # --- Vocabulary List Generation --- #
     # skip if 'model' and 'vocab' exist at the same time
@@ -162,7 +167,8 @@ def generate_vocab_sentencepiece(save_path: str, text_path: str, txt_format: str
 
         # disable bos and eos. <sos>/<eos> will be added externally, so vocab_size need to be subtracted from 1
         # add <blank> and put <unk> to the end of the vocabulary
-        spm.SentencePieceTrainer.train(input=idx2text_path, model_prefix='m',
+        # TODO: idx2text_path is changed to text_only_path
+        spm.SentencePieceTrainer.train(input=text_only_path, model_prefix='m',
                                        vocab_size=vocab_size - 1, model_type=model_type,
                                        character_coverage=character_coverage,
                                        split_by_whitespace=split_by_whitespace, user_defined_symbols='<blank>',

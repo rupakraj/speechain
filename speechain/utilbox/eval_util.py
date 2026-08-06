@@ -19,6 +19,18 @@ def get_word_edit_alignment(hypo: str, real: str) -> (int, int, int, str):
     Returns:
 
     """
+    # # DEBUG: Handle cases where hypo might be a list instead of string
+    # if isinstance(hypo, list):
+    #     print(f"DEBUG get_word_edit_alignment: hypo is list, converting to string: {hypo}")
+    #     hypo = ''.join(hypo) if all(isinstance(x, str) for x in hypo) else str(hypo)
+
+    # if isinstance(real, list):
+    #     print(f"DEBUG get_word_edit_alignment: real is list, converting to string: {real}")
+    #     real = ''.join(real) if all(isinstance(x, str) for x in real) else str(real)
+
+    # print(f"DEBUG get_word_edit_alignment: hypo='{hypo}', real='{real}'")
+    # # DEBUG: ends
+
     # calculate the alignment between the hypothesis words and real words
     # Note that split(" ") is not equivalent to split() here
     # because split(" ") will give an extra '' at the end of the list if the string ends with a " "
@@ -58,7 +70,7 @@ def get_word_edit_alignment(hypo: str, real: str) -> (int, int, int, str):
 
     # Create headers for each word position
     headers = [""] + [f"Word {i+1}" for i in range(len(hypo_words))]
-    
+
     align_table = get_table_strings(
         contents=[hypo_words, word_ops, real_words],
         first_col=["Hypothesis", "Alignment", "Reference"],
